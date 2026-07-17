@@ -252,5 +252,58 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     if (!css) styleEl.remove();
   }
 
+  // ── Rule E: Redundant no-op <g> wrappers ───────────────────────────────
+  // Unwrap <g> elements that carry no meaningful attributes AND wrap exactly
+  // one child. Process bottom-up so inner redundant groups collapse first.
+  const protectedAttrs = new Set([
+    'clip-path', 'clipPath', 'mask', 'filter', 'opacity',
+    'display', 'visibility', 'pointer-events',
+  ]);
+  const graphicsTags = new Set([
+    'g', 'path', 'rect', 'circle', 'ellipse', 'line',
+    'polyline', 'polygon', 'text', 'tspan', 'image', 'use', 'svg',
+  ]);
+
+  let groupsRemoved = 0;
+  const groups = allElements().filter(el => el.tagName.toLowerCase() === 'g').reverse();
+
+  for (const g of groups) {
+    let hasProtected = false;
+    for (const attr of Array.from(g.attributes)) {
+      if (protectedAttrs.has(attr.name.toLowerCase())) {
+        hasProtected = true;
+        break;
+      }
+    }
+    if (hasProtected) continue;
+
+    const validChildren = Array.from(g.children).filter(child => graphicsTags.has(child.tagName.toLowerCase()));
+    if (validChildren.length !== 1 || g.children.length !== 1) continue;
+
+    const child = validChildren[0]!;
+
+    if (g.hasAttribute('transform') && child.hasAttribute('transform')) continue;
+
+    for (const attr of Array.from(g.attributes)) {
+      if (attr.name === 'id' || attr.name === 'data-name') {
+        // Outer groups often contain the human-readable layer name.
+        // Because we process bottom-up, outer groups are processed last,
+        // so overwriting here ensures the outermost name wins.
+        child.setAttribute(attr.name, attr.value);
+      } else if (!child.hasAttribute(attr.name)) {
+        child.setAttribute(attr.name, attr.value);
+      } else if (attr.name === 'class') {
+        child.setAttribute('class', `${attr.value} ${child.getAttribute('class')}`.trim());
+      }
+    }
+
+    g.parentNode?.replaceChild(child, g);
+    groupsRemoved++;
+  }
+
+  if (groupsRemoved > 0) {
+    warnings.push(`Unwrapped ${groupsRemoved} redundant <g> groups`);
+  }
+
   return warnings;
 }
