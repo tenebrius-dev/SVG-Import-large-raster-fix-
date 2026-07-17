@@ -277,6 +277,12 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     }
     if (hasProtected) continue;
 
+    // Never unwrap top-level groups (direct children of <svg>).
+    // Figma relies on these for main layer naming, and a known Figma bug causes
+    // sliced <svg> image wrappers or transformed elements to disappear if they
+    // become direct children of the root <svg> without a <g> wrapper.
+    if (g.parentNode === root) continue;
+
     const validChildren = Array.from(g.children).filter(child => graphicsTags.has(child.tagName.toLowerCase()));
     if (validChildren.length !== 1 || g.children.length !== 1) continue;
 
