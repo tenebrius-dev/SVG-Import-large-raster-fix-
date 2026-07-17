@@ -243,59 +243,5 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     }
   }
 
-  // ── Rule E: Redundant no-op <g> wrappers ──────────────────────────────
-  const protectedAttrs = new Set([
-    'clip-path', 'clipPath', 'mask', 'filter', 'opacity',
-    'display', 'visibility', 'pointer-events',
-  ]);
-  const graphicsTags = new Set([
-    'g', 'path', 'rect', 'circle', 'ellipse', 'line',
-    'polyline', 'polygon', 'text', 'tspan', 'image', 'use', 'svg',
-  ]);
-
-  let groupsRemoved = 0;
-  const groups = allElements().filter(el => el.tagName.toLowerCase() === 'g').reverse();
-
-  for (const g of groups) {
-    // Skip if any protected attribute
-    const hasProtected = Array.from(g.attributes).some(a => protectedAttrs.has(a.name));
-    if (hasProtected) continue;
-
-    // Skip if class references a clip-path
-    const classList = (g.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
-    const classHasClip = classList.some(cls => (classToClipMap.get(cls) ?? []).length > 0);
-    if (classHasClip) continue;
-
-    const graphicsChildren = Array.from(g.children).filter(c =>
-      graphicsTags.has(c.tagName.toLowerCase()),
-    );
-    if (graphicsChildren.length === 1 && g.children.length === graphicsChildren.length) {
-      const parent = g.parentNode;
-      if (!parent) continue;
-      const child = graphicsChildren[0]!;
-      for (const attr of Array.from(g.attributes)) {
-        const name = attr.name;
-        if (protectedAttrs.has(name)) continue;
-        const childVal = child.getAttribute(name);
-        if (name === 'transform') {
-          child.setAttribute('transform', childVal ? `${attr.value} ${childVal}` : attr.value);
-        } else if (name === 'class') {
-          child.setAttribute('class', childVal ? `${attr.value} ${childVal}` : attr.value);
-        } else if (name === 'style') {
-          child.setAttribute('style', childVal ? `${attr.value}; ${childVal}` : attr.value);
-        } else if (!childVal) {
-          child.setAttribute(name, attr.value);
-        }
-      }
-      parent.insertBefore(child, g);
-      g.remove();
-      groupsRemoved++;
-    }
-  }
-
-  if (groupsRemoved > 0) {
-    warnings.push(`Unwrapped ${groupsRemoved} redundant <g> groups`);
-  }
-
   return warnings;
 }
