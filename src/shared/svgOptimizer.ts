@@ -193,54 +193,14 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     const rw = parseFloat(rect.getAttribute('width') || '0');
     const rh = parseFloat(rect.getAttribute('height') || '0');
 
-    // ── Rule C: Artboard-bounds clip ──────────────────────────────────────
-    const isArtboardClip =
-      Math.abs(rx) < 1.5 &&
-      Math.abs(ry) < 1.5 &&
-      Math.abs(rw - info.width) < 5 &&
-      Math.abs(rh - info.height) < 5;
-
-    if (isArtboardClip) {
-      warnings.push(`Removed redundant clip-path "#${id}" (document bounds)`);
-      usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
-      clip.remove();
-      continue;
-    }
-
-    // ── Rule D: Element-bounds clip (single <image> usage only) ──────────
-    if (usages.length === 1) {
-      const usage = usages[0]!;
-      let ex = NaN, ey = NaN, ew = NaN, eh = NaN;
-
-      if (usage.tagName.toLowerCase() === 'image') {
-        ex = parseFloat(usage.getAttribute('x') || '0');
-        ey = parseFloat(usage.getAttribute('y') || '0');
-        ew = parseFloat(usage.getAttribute('width') || '0');
-        eh = parseFloat(usage.getAttribute('height') || '0');
-      } else if (usage.tagName.toLowerCase() === 'g' && usage.children.length === 1) {
-        const child = usage.children[0]!;
-        if (child.tagName.toLowerCase() === 'image') {
-          ex = parseFloat(child.getAttribute('x') || '0');
-          ey = parseFloat(child.getAttribute('y') || '0');
-          ew = parseFloat(child.getAttribute('width') || '0');
-          eh = parseFloat(child.getAttribute('height') || '0');
-        }
-      }
-
-      if (!isNaN(ew) && ew > 0) {
-        const isElementBounds =
-          Math.abs(rx - ex) < 0.1 &&
-          Math.abs(ry - ey) < 0.1 &&
-          Math.abs(rw - ew) < 1 &&
-          Math.abs(rh - eh) < 1;
-
-        if (isElementBounds) {
-          warnings.push(`Removed redundant clip-path "#${id}" (element bounds)`);
-          usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
-          clip.remove();
-        }
-      }
-    }
+    // ── Rule C & D: Rectangular Bounding Box Clip ─────────────────────────
+    // In SVGs exported from design tools, single-rect clipPaths are almost
+    // entirely garbage bounding boxes (artboard bounds or image bounds).
+    // Because calculating exact bounds across nested transform matrices in pure
+    // JS is unreliable, we aggressively remove all single-rect clipPaths.
+    warnings.push(`Removed rectangular bounding-box clip-path "#${id}"`);
+    usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
+    clip.remove();
   }
 
   // ── Clean up <style> block ─────────────────────────────────────────────
