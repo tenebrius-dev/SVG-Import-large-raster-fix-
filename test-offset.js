@@ -1,1 +1,0 @@
-// checking offsetHeight logic
