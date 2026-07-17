@@ -243,5 +243,54 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     }
   }
 
+  // ── Clean up <style> block ─────────────────────────────────────────────
+  // After removing clipPath definitions and their class attributes from elements,
+  // also remove the CSS rules that reference those clip-paths from the <style> block.
+  // Figma reads and applies <style> CSS during SVG import, so orphaned clip-path
+  // CSS rules would still create "Clip path group" layers.
+  //
+  // We remove entire CSS rules (.cls-N { ... }) that contain clip-path declarations
+  // pointing to clip-path IDs that no longer exist in the document.
+  const remainingClipIds = new Set(
+    allElements()
+      .filter(el => el.tagName === 'clipPath' || el.tagName.toLowerCase() === 'clippath')
+      .map(el => el.getAttribute('id'))
+      .filter(Boolean) as string[],
+  );
+
+  for (const styleEl of Array.from(doc.querySelectorAll('style'))) {
+    let css = styleEl.textContent || '';
+
+    // Remove CSS rules whose clip-path references a deleted clipPath id
+    css = css.replace(/\.([\w-]+)\s*\{([^}]*)\}/g, (fullRule, _cls, body) => {
+      const cpRe = /clip-path\s*:\s*url\(['"]*#([\w-]+)['"]*\)/gi;
+      let cpMatch: RegExpExecArray | null;
+      let hasDeletedClip = false;
+
+      while ((cpMatch = cpRe.exec(body)) !== null) {
+        const clipId = cpMatch[1]!;
+        if (!remainingClipIds.has(clipId)) {
+          hasDeletedClip = true;
+          break;
+        }
+      }
+
+      if (hasDeletedClip) {
+        // Remove only the clip-path declaration from the body; if nothing remains, drop entire rule
+        const cleanedBody = body.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
+        if (!cleanedBody) return ''; // Remove entire rule
+        return fullRule.replace(body, cleanedBody); // Keep rule, remove only clip-path line
+      }
+      return fullRule; // Keep as-is
+    });
+
+    // Clean up extra blank lines
+    css = css.replace(/\n{3,}/g, '\n\n').trim();
+    styleEl.textContent = css || '';
+
+    // If style block is now empty, remove it entirely
+    if (!css) styleEl.remove();
+  }
+
   return warnings;
 }
