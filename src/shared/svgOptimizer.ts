@@ -1,5 +1,34 @@
 import type { SVGInfo } from './types.js';
 
+function findClipPathUsages(doc: Document, id: string): Element[] {
+  const usages: Element[] = [];
+  const attrElements = Array.from(doc.querySelectorAll('[clip-path]'));
+  for (const el of attrElements) {
+    const val = el.getAttribute('clip-path') || '';
+    if (val.includes(`#${id}`) && val.includes('url(')) usages.push(el);
+  }
+  const styleElements = Array.from(doc.querySelectorAll('[style*="clip-path"]'));
+  for (const el of styleElements) {
+    const val = el.getAttribute('style') || '';
+    if (val.includes('clip-path') && val.includes(`#${id}`) && val.includes('url(')) {
+      if (!usages.includes(el)) usages.push(el);
+    }
+  }
+  return usages;
+}
+
+function removeClipPathUsage(el: Element, id: string): void {
+  const attr = el.getAttribute('clip-path');
+  if (attr && attr.includes(`#${id}`)) el.removeAttribute('clip-path');
+  
+  const style = el.getAttribute('style');
+  if (style && style.includes('clip-path') && style.includes(`#${id}`)) {
+    const newStyle = style.replace(/clip-path\s*:\s*url\([^)]*#[^)]*\)\s*;?/i, '').trim();
+    if (newStyle) el.setAttribute('style', newStyle);
+    else el.removeAttribute('style');
+  }
+}
+
 /**
  * Remove redundant <clipPath> masks from an SVG Document.
  * Runs in-place on the Document.
@@ -43,7 +72,7 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     if (!isRedundant) {
       // Find all elements using this clip path
       // Note: CSS selector for exact match
-      const usages = Array.from(doc.querySelectorAll(`[clip-path="url(#${id})"]`));
+      const usages = findClipPathUsages(doc, id);
       
       if (usages.length === 1) {
         const usage = usages[0]!;
@@ -89,8 +118,8 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
       warnings.push(`Removed redundant clip-path "#${id}" (${reason})`);
       
       // Remove clip-path attributes from all elements referencing it
-      const usages = Array.from(doc.querySelectorAll(`[clip-path="url(#${id})"]`));
-      usages.forEach(el => el.removeAttribute('clip-path'));
+      const usages = findClipPathUsages(doc, id);
+      usages.forEach(el => removeClipPathUsage(el, id));
       
       // Remove the clipPath definition itself
       clip.remove();
@@ -105,13 +134,13 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     const id = clip.getAttribute('id');
     if (!id) return;
     
-    const usages = Array.from(doc.querySelectorAll(`[clip-path="url(#${id})"]`));
+    const usages = findClipPathUsages(doc, id);
     if (usages.length === 0) {
       warnings.push(`Removed unused clip-path "#${id}"`);
       clip.remove();
     } else if (clip.children.length === 0) {
       warnings.push(`Removed empty clip-path "#${id}"`);
-      usages.forEach(el => el.removeAttribute('clip-path'));
+      usages.forEach(el => removeClipPathUsage(el, id));
       clip.remove();
     }
   });
