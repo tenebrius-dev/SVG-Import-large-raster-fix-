@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SVG Import POC</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      background: #111;
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 16px;
+      gap: 12px;
+    }
+    h2 { font-size: 14px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; }
+    p  { font-size: 11px; color: #94a3b8; line-height: 1.5; }
+    textarea {
+      width: 100%;
+      height: 120px;
+      background: #1e1e2e;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #e2e8f0;
+      font-family: monospace;
+      font-size: 10px;
+      padding: 8px;
+      resize: vertical;
+    }
+    textarea::placeholder { color: #475569; }
+    button {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-primary { background: #7c3aed; color: white; }
+    .btn-primary:hover { background: #6d28d9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      background: #1e1e2e;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #94a3b8;
+      min-height: 60px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .label { font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px; }
+    .info-box {
+      background: rgba(124, 58, 237, 0.1);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #a78bfa;
+      line-height: 1.6;
+    }
+    .success { color: #10b981; }
+    .warning { color: #f59e0b; }
+    .error { color: #ef4444; }
+    .drop-zone {
+      border: 1.5px dashed #334155;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      color: #475569;
+      font-size: 11px;
+      transition: all 200ms;
+    }
+    .drop-zone:hover, .drop-zone.over { border-color: #7c3aed; color: #a78bfa; background: rgba(124,58,237,0.05); }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+
+  <div>
+    <h2>🔬 SVG Import — Proof of Concept</h2>
+    <p>Tests whether <code>figma.createImage()</code> preserves more resolution than embedded PNG in SVG.</p>
+  </div>
+
+  <div class="info-box">
+    <strong>How to use:</strong><br>
+    1. Drop or paste an SVG file that contains embedded PNG(s)<br>
+    2. Click "Run POC Test" to import via all 3 methods<br>
+    3. Compare results in Figma canvas and in the log below
+  </div>
+
+  <!-- Drop zone -->
+  <div>
+    <div class="label">SVG Input</div>
+    <div class="drop-zone" id="drop-zone">
+      Drop SVG file here or click to select<br>
+      <small>(should contain an embedded PNG &gt;4096 px for best test results)</small>
+    </div>
+    <input type="file" id="file-input" accept=".svg,image/svg+xml">
+  </div>
+
+  <!-- Or paste SVG text -->
+  <div>
+    <div class="label">— or paste SVG markup here —</div>
+    <textarea id="svg-input" placeholder="Paste SVG XML content here..."></textarea>
+  </div>
+
+  <button class="btn-primary" id="btn-run" disabled>Run POC Test</button>
+
+  <div>
+    <div class="label">Results</div>
+    <div class="status" id="status-log">Awaiting SVG input…</div>
+  </div>
+
+  <script>
+  // ── Plugin communication ──
+  function sendToPlugin(msg) {
+    parent.postMessage({ pluginMessage: msg }, '*');
+  }
+
+  // ── Receive from plugin ──
+  window.onmessage = (e) => {
+    const msg = e.data?.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'poc-results') {
+      renderResults(msg.results);
+    }
+  };
+
+  // ── State ──
+  let svgText = '';
+  const statusLog = document.getElementById('status-log');
+  const btnRun = document.getElementById('btn-run');
+  const svgInput = document.getElementById('svg-input');
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  function log(msg, cls = '') {
+    const line = document.createElement('div');
+    line.textContent = msg;
+    if (cls) line.className = cls;
+    statusLog.appendChild(line);
+    statusLog.scrollTop = statusLog.scrollHeight;
+  }
+
+  function clearLog() {
+    statusLog.innerHTML = '';
+  }
+
+  // ── File loading ──
+  function loadSVG(text) {
+    svgText = text.trim();
+    svgInput.value = svgText;
+    clearLog();
+    log('SVG loaded. Analyzing...');
+    const analysis = analyzeSVG(svgText);
+    if (analysis) {
+      log(`SVG size: ${analysis.width} × ${analysis.height}`);
+      if (analysis.viewBox) log(`viewBox: ${JSON.stringify(analysis.viewBox)}`);
+      log(`Embedded images found: ${analysis.images.length}`);
+      analysis.images.forEach((img, i) => {
+        log(`  Image ${i+1}: x=${img.x} y=${img.y} w=${img.w} h=${img.h} mime=${img.mime} transform=${img.transform}`);
+        if (img.bitmapW && img.bitmapH) {
+          log(`    Bitmap: ${img.bitmapW} × ${img.bitmapH} px`, img.bitmapW > 4096 || img.bitmapH > 4096 ? 'warning' : 'success');
+        }
+      });
+      btnRun.disabled = analysis.images.length === 0;
+      if (analysis.images.length === 0) {
+        log('⚠ No embedded rasters found. The SVG must contain a <image> with data:image/png or data:image/jpeg.', 'warning');
+      } else {
+        log('Ready. Click "Run POC Test" to start.', 'success');
+      }
+    }
+  }
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', async e => {
+    e.preventDefault();
+    dropZone.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f) loadSVG(await f.text());
+  });
+  fileInput.addEventListener('change', async () => {
+    if (fileInput.files[0]) {
+      loadSVG(await fileInput.files[0].text());
+      fileInput.value = '';
+    }
+  });
+  svgInput.addEventListener('input', () => {
+    if (svgInput.value.trim().startsWith('<svg') || svgInput.value.trim().startsWith('<?xml')) {
+      loadSVG(svgInput.value);
+    }
+  });
+  document.addEventListener('paste', (e) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (text && (text.trim().startsWith('<svg') || text.trim().startsWith('<?xml'))) {
+      e.preventDefault();
+      loadSVG(text);
+    }
+  });
+
+  // ── SVG analysis ──
+  function analyzeSVG(svgStr) {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(svgStr, 'image/svg+xml');
+      const root = doc.documentElement;
+      if (!root || root.tagName.toLowerCase() !== 'svg') return null;
+
+      const vb = root.getAttribute('viewBox');
+      const vbParsed = vb ? vb.split(/[\s,]+/).map(Number) : null;
+      const width = parseFloat(root.getAttribute('width') || (vbParsed ? vbParsed[2] : 300));
+      const height = parseFloat(root.getAttribute('height') || (vbParsed ? vbParsed[3] : 150));
+
+      const images = [];
+      doc.querySelectorAll('image').forEach(img => {
+        const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+        if (!href.startsWith('data:image/')) return;
+
+        const commaIdx = href.indexOf(',');
+        const meta = href.slice(5, commaIdx);
+        const mime = meta.split(';')[0];
+        const b64 = href.slice(commaIdx + 1).replace(/\s/g, '');
+
+        // Decode
+        let bitmapW = null, bitmapH = null, bytesArray = null;
+        try {
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          bytesArray = Array.from(bytes);
+
+          if (mime === 'image/png') {
+            bitmapW = (bytes[16] << 24 | bytes[17] << 16 | bytes[18] << 8 | bytes[19]) >>> 0;
+            bitmapH = (bytes[20] << 24 | bytes[21] << 16 | bytes[22] << 8 | bytes[23]) >>> 0;
+          }
+        } catch(e) {}
+
+        images.push({
+          x: parseFloat(img.getAttribute('x') || '0'),
+          y: parseFloat(img.getAttribute('y') || '0'),
+          w: parseFloat(img.getAttribute('width') || '0'),
+          h: parseFloat(img.getAttribute('height') || '0'),
+          transform: img.getAttribute('transform') || '',
+          mime,
+          bitmapW,
+          bitmapH,
+          bytesArray,
+        });
+      });
+
+      return { width, height, viewBox: vbParsed ? { x: vbParsed[0], y: vbParsed[1], width: vbParsed[2], height: vbParsed[3] } : null, images };
+    } catch(e) {
+      log('Parse error: ' + e.message, 'error');
+      return null;
+    }
+  }
+
+  // ── Run test ──
+  btnRun.addEventListener('click', () => {
+    if (!svgText) return;
+    const analysis = analyzeSVG(svgText);
+    if (!analysis || analysis.images.length === 0) return;
+
+    const img = analysis.images[0]; // Test first image
+    clearLog();
+    log('Running POC test...');
+    log(`Input: ${img.bitmapW ?? '?'} × ${img.bitmapH ?? '?'} px bitmap`);
+    log(`SVG element size: ${img.w} × ${img.h} at (${img.x}, ${img.y})`);
+    log('Creating 3 nodes in Figma:');
+    log('  [A] Standard SVG import (original with embedded PNG)');
+    log('  [B] Separate figma.createImage() at SVG geometry');
+    log('  [C] figma.createImage() at actual stored size');
+
+    sendToPlugin({
+      type: 'test-raster-import',
+      pngBytesArray: img.bytesArray,
+      originalSvgString: svgText,
+      svgX: img.x,
+      svgY: img.y,
+      svgW: img.w,
+      svgH: img.h,
+      transform: img.transform,
+      fileName: 'test.svg',
+    });
+  });
+
+  function renderResults(results) {
+    log('--- RESULTS ---', 'success');
+    for (const [key, val] of Object.entries(results)) {
+      const valStr = typeof val === 'object' ? JSON.stringify(val) : String(val);
+      const cls = valStr.includes('error') ? 'error' : valStr.includes('success') ? 'success' : '';
+      log(`${key}: ${valStr}`, cls);
+    }
+    log('--- Check Figma canvas for visual comparison ---', 'success');
+
+    // Key insight check
+    const figmaSize = results.figmaImageSizeAfterImport;
+    if (figmaSize && typeof figmaSize === 'object') {
+      const maxSide = Math.max(figmaSize.width, figmaSize.height);
+      if (maxSide > 4096) {
+        log(`✓ HYPOTHESIS CONFIRMED: figma.createImage() stored ${figmaSize.width}×${figmaSize.height} (>4096)`, 'success');
+      } else {
+        log(`✗ HYPOTHESIS UNCERTAIN: figma.createImage() stored ${figmaSize.width}×${figmaSize.height} (≤4096)`, 'warning');
+        log('  Consider implementing canvas-based downscaling fallback', 'warning');
+      }
+    }
+  }
+  </script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG Smart Import</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+/* INJECT_CSS */
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══════════════ HEADER ═══════════════ -->
+  <header class="header">
+    <div class="header-title">
+      <div class="header-logo">
+        <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zm0 7h5v5H9V9zm-7 0h5v5H2V9z"/>
+        </svg>
+      </div>
+      <h1>SVG Smart Import</h1>
+    </div>
+    <div class="header-actions">
+      <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Toggle settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-debug" title="Debug mode" aria-label="Toggle debug mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M17.47 9c1.93-.2 3.53-1.9 3.53-4"/><path d="M8 14H2"/><path d="M22 14h-6"/><path d="M9 18h-2"/><path d="M17 18h-2"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══════════════ CONTENT ═══════════════ -->
+  <main class="content">
+
+    <!-- Settings panel (shown when settings icon toggled) -->
+    <div id="settings-panel" style="display:none; margin-bottom: 16px; flex-shrink: 0;">
+      <div class="settings-card">
+        <div class="settings-card-title">Settings</div>
+
+        <!-- Optimize toggle -->
+        <div class="setting-row">
+          <label class="setting-label" for="toggle-optimize">
+            Optimize large embedded rasters
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-optimize" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <!-- Slice large images toggle (shown only when optimize is enabled) -->
+        <div class="setting-row" id="slicing-setting" style="margin-top: 12px;">
+          <label class="setting-label" for="toggle-slice-images">
+            Slice images larger than 4096px (No quality loss)
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-slice-images">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <!-- Optimize masks toggle -->
+        <div class="setting-row" style="margin-top: 12px;">
+          <label class="setting-label" for="toggle-optimize-masks">
+            Clean up redundant mask groups (clip-path)
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-optimize-masks" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VIEW: IDLE (drop zone) ─────────────────────── -->
+    <section class="view active" id="view-idle">
+
+      <!-- Drop zone -->
+      <div class="drop-zone" id="drop-zone" tabindex="0" role="button"
+           aria-label="Drop SVG files here, click to select files, or paste SVG with Cmd+V">
+        <div class="drop-zone-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+        </div>
+        <div class="drop-zone-text">
+          <strong>Drop SVG files here</strong>
+          <span>click to upload • Cmd+V to paste</span>
+        </div>
+      </div>
+
+      <!-- File input (hidden) -->
+      <input type="file" id="file-input" accept=".svg,image/svg+xml" multiple
+             style="display:none;" aria-hidden="true">
+
+
+
+    </section>
+
+    <!-- ── VIEW: FILES READY ──────────────────────────── -->
+    <section class="view" id="view-files">
+      <div class="file-list" id="file-list"></div>
+
+      <!-- Add more button -->
+      <button class="btn btn-ghost" id="btn-add-more" style="font-size:11px;">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 3v10M3 8h10"/>
+        </svg>
+        Add more files
+      </button>
+    </section>
+
+    <!-- ── VIEW: PROGRESS ─────────────────────────────── -->
+    <section class="view" id="view-progress">
+      <div class="progress-view">
+        <div class="progress-spinner">
+          <div class="progress-spinner-ring"></div>
+        </div>
+        <div class="progress-text">
+          <div class="progress-stage" id="progress-stage">Processing…</div>
+          <div class="progress-sub" id="progress-sub"></div>
+        </div>
+        <div style="width:100%; max-width:280px;">
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="stage-list" id="stage-list">
+          <div class="stage-item" data-stage="parse">
+            <div class="stage-dot"></div>Parsing SVG
+          </div>
+          <div class="stage-item" data-stage="extract">
+            <div class="stage-dot"></div>Extracting raster images
+          </div>
+          <div class="stage-item" data-stage="import-svg">
+            <div class="stage-dot"></div>Importing vectors
+          </div>
+          <div class="stage-item" data-stage="import-raster">
+            <div class="stage-dot"></div>Importing raster images
+          </div>
+          <div class="stage-item" data-stage="restore">
+            <div class="stage-dot"></div>Restoring geometry &amp; layer order
+          </div>
+          <div class="stage-item" data-stage="done">
+            <div class="stage-dot"></div>Done
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── VIEW: REPORT ───────────────────────────────── -->
+    <section class="view" id="view-report">
+      <div id="report-header-wrap"></div>
+      <div id="report-content"></div>
+    </section>
+
+    <!-- ── DEBUG LOG (shown in all views when debug=on) ── -->
+    <div id="debug-section" style="display:none;">
+      <div class="debug-log-header">
+        <div class="debug-log-title">Debug Log</div>
+        <button class="btn-icon" id="btn-copy-debug" aria-label="Copy debug log" title="Copy to clipboard">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="5" y="5" width="8" height="8" rx="1"/>
+            <path d="M3 11V4a1 1 0 0 1 1-1h7"/>
+          </svg>
+        </button>
+      </div>
+      <div class="debug-log" id="debug-log"></div>
+    </div>
+
+  </main>
+
+  <!-- ═══════════════ ACTION BAR ═══════════════ -->
+  <div class="action-bar" id="action-bar">
+    <button class="btn btn-primary" id="btn-import" disabled>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M8 1v10M4 7l4 4 4-4M2 14h12"/>
+      </svg>
+      Import to Figma
+    </button>
+  </div>
+
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast" role="alert" aria-live="polite"></div>
+
+<script>
+/* INJECT_JS */
+</script>
+</body>
+</html>

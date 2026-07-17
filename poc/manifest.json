@@ -1,0 +1,7 @@
+{
+  "name": "SVG Smart Import — POC",
+  "api": "1.0.0",
+  "main": "poc-code.js",
+  "ui": "poc-ui.html",
+  "editorType": ["figma"]
+}
