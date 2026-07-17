@@ -5,8 +5,9 @@ import type { SVGInfo } from './types.js';
  * Runs in-place on the Document.
  * Returns a list of optimization messages (warnings).
  *
- * Uses TreeWalker + precise regex matching to avoid false prefix matches
- * (e.g. "#clippath" vs "#clippath-1").
+ * Handles both:
+ *  - Direct attribute: clip-path="url(#id)"
+ *  - CSS class: .cls-N { clip-path: url(#id); } applied via class="cls-N"
  */
 export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   const warnings: string[] = [];
@@ -28,48 +29,134 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
 
   /**
    * Build a regex that matches `url(#id)` exactly — NOT `url(#id-suffix)`.
-   * Handles optional quotes and whitespace.
+   * Handles optional quotes and whitespace inside url().
    */
   function makeIdRegex(id: string): RegExp {
     const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // After #id must come ) or whitespace or quote — not a word char
     return new RegExp(`url\\(['"\\s]*#${esc}['"\\s]*\\)`, 'i');
   }
 
   /**
-   * Find all elements that reference a given clipPath id **exactly**.
-   * Checks both the `clip-path` attribute and inline `style`.
-   * Uses TreeWalker to avoid querySelectorAll attribute-selector quirks.
+   * Parse the SVG <style> block and build a map:
+   *   className → list of clipPath ids referenced via clip-path
+   *
+   * Example: .cls-2 { clip-path: url(#clippath-1); }
+   * → { 'cls-2': ['clippath-1'] }
    */
-  function findClipPathUsages(id: string): Element[] {
+  function buildClassToClipMap(): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    const styleEls = Array.from(doc.querySelectorAll('style'));
+    for (const styleEl of styleEls) {
+      const css = styleEl.textContent || '';
+      // Match .className { ... clip-path: url(#id) ... }
+      const ruleRe = /\.([\w-]+)\s*\{([^}]*)\}/g;
+      let ruleMatch: RegExpExecArray | null;
+      while ((ruleMatch = ruleRe.exec(css)) !== null) {
+        const className = ruleMatch[1]!;
+        const body = ruleMatch[2]!;
+        const cpRe = /clip-path\s*:\s*url\(['"]*#([\w-]+)['"]*\)/gi;
+        let cpMatch: RegExpExecArray | null;
+        while ((cpMatch = cpRe.exec(body)) !== null) {
+          const clipId = cpMatch[1]!;
+          const existing = map.get(className) ?? [];
+          existing.push(clipId);
+          map.set(className, existing);
+        }
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Find all elements that reference a given clipPath id.
+   * Checks: direct clip-path/clipPath attribute, inline style, and CSS class rules.
+   */
+  function findClipPathUsages(id: string, classMap: Map<string, string[]>): Element[] {
     const re = makeIdRegex(id);
-    return allElements().filter(el => {
+    const els = allElements();
+
+    return els.filter(el => {
+      // 1. Direct attribute
       const attr = el.getAttribute('clip-path') ?? el.getAttribute('clipPath') ?? '';
       if (re.test(attr)) return true;
+
+      // 2. Inline style
       const style = el.getAttribute('style') ?? '';
-      return style.includes('clip-path') && re.test(style);
+      if (style.includes('clip-path') && re.test(style)) return true;
+
+      // 3. CSS class
+      const classList = (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      for (const cls of classList) {
+        const clipIds = classMap.get(cls) ?? [];
+        if (clipIds.includes(id)) return true;
+      }
+
+      return false;
     });
   }
 
-  /** Remove the clip-path reference pointing to `id` from an element. */
-  function removeClipPathRef(el: Element, id: string): void {
-    const re = makeIdRegex(id);
-    const attr = el.getAttribute('clip-path') ?? el.getAttribute('clipPath') ?? '';
-    if (re.test(attr)) {
+  /**
+   * Remove the clip-path reference pointing to `id` from an element.
+   * Also removes CSS classes that only exist to apply this clip-path
+   * (if the class has no other declarations).
+   */
+  function removeClipPathRef(
+    el: Element,
+    id: string,
+    classMap: Map<string, string[]>,
+    classOnlyClipMap: Set<string>,
+  ): void {
+    // Direct attribute
+    const attrVal = el.getAttribute('clip-path') ?? el.getAttribute('clipPath') ?? '';
+    if (makeIdRegex(id).test(attrVal)) {
       el.removeAttribute('clip-path');
       el.removeAttribute('clipPath');
     }
-    const style = el.getAttribute('style') ?? '';
-    if (style.includes('clip-path') && re.test(style)) {
-      // Remove the clip-path: url(#id) declaration from style
-      const cleaned = style.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
+
+    // Inline style
+    const styleVal = el.getAttribute('style') ?? '';
+    if (styleVal.includes('clip-path') && makeIdRegex(id).test(styleVal)) {
+      const cleaned = styleVal.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
       if (cleaned) el.setAttribute('style', cleaned);
       else el.removeAttribute('style');
+    }
+
+    // CSS class — remove class if it was clip-path-only
+    const classes = (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+    const remaining = classes.filter(cls => {
+      const clipIds = classMap.get(cls) ?? [];
+      if (clipIds.includes(id)) {
+        // Only remove the class if it ONLY sets clip-path (nothing else visual)
+        return !classOnlyClipMap.has(cls);
+      }
+      return true;
+    });
+    if (remaining.length !== classes.length) {
+      if (remaining.length > 0) el.setAttribute('class', remaining.join(' '));
+      else el.removeAttribute('class');
+    }
+  }
+
+  // ── Build CSS class → clipPath map ────────────────────────────────────
+  const classToClipMap = buildClassToClipMap();
+
+  // Determine which classes ONLY set clip-path (so they can be fully removed)
+  const classOnlyClipSet = new Set<string>();
+  const styleEls = Array.from(doc.querySelectorAll('style'));
+  for (const styleEl of styleEls) {
+    const css = styleEl.textContent || '';
+    const ruleRe = /\.([\w-]+)\s*\{([^}]*)\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = ruleRe.exec(css)) !== null) {
+      const cls = m[1]!;
+      const body = m[2]!.trim();
+      // Only clip-path declaration?
+      const withoutCp = body.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
+      if (!withoutCp) classOnlyClipSet.add(cls);
     }
   }
 
   // ── Gather all <clipPath> elements ─────────────────────────────────────
-  // Collect once up-front so DOM mutations during the loop don't affect iteration.
   const clipPaths = allElements().filter(
     el => el.tagName === 'clipPath' || el.tagName.toLowerCase() === 'clippath',
   );
@@ -80,25 +167,24 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
 
     const children = Array.from(clip.children);
 
-    // ── Rule A: Completely empty <clipPath> (no children) ─────────────────
+    // ── Rule A: Empty <clipPath> ──────────────────────────────────────────
     if (children.length === 0) {
-      const usages = findClipPathUsages(id);
+      const usages = findClipPathUsages(id, classToClipMap);
       warnings.push(`Removed empty clip-path "#${id}"`);
-      usages.forEach(el => removeClipPathRef(el, id));
+      usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
       clip.remove();
       continue;
     }
 
-    // ── Rule B: Unused <clipPath> ────────────────────────────────────────
-    const usages = findClipPathUsages(id);
+    // ── Rule B: Unused <clipPath> ─────────────────────────────────────────
+    const usages = findClipPathUsages(id, classToClipMap);
     if (usages.length === 0) {
       warnings.push(`Removed unused clip-path "#${id}"`);
       clip.remove();
       continue;
     }
 
-    // From here: clipPath has children and IS referenced.
-    // Only continue analysis for the simple single-rect case.
+    // Only analyze single-rect clips further
     if (children.length !== 1 || children[0]!.tagName.toLowerCase() !== 'rect') continue;
 
     const rect = children[0]!;
@@ -107,25 +193,21 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     const rw = parseFloat(rect.getAttribute('width') || '0');
     const rh = parseFloat(rect.getAttribute('height') || '0');
 
-    // ── Rule C: Artboard-bounds clip ─────────────────────────────────────
-    // The clip rect equals the full SVG document size.
-    // Figma wraps everything in its own frame, so this clip is always redundant.
+    // ── Rule C: Artboard-bounds clip ──────────────────────────────────────
     const isArtboardClip =
-      Math.abs(rx) < 0.1 &&
-      Math.abs(ry) < 0.1 &&
-      Math.abs(rw - info.width) < 1 &&
-      Math.abs(rh - info.height) < 1;
+      Math.abs(rx) < 1.5 &&
+      Math.abs(ry) < 1.5 &&
+      Math.abs(rw - info.width) < 5 &&
+      Math.abs(rh - info.height) < 5;
 
     if (isArtboardClip) {
       warnings.push(`Removed redundant clip-path "#${id}" (document bounds)`);
-      usages.forEach(el => removeClipPathRef(el, id));
+      usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
       clip.remove();
       continue;
     }
 
-    // ── Rule D: Element-bounds clip (single usage, clip == element bounds) ─
-    // The clip rect perfectly matches the exact size of the clipped element,
-    // meaning the clip has zero visual effect.
+    // ── Rule D: Element-bounds clip (single <image> usage only) ──────────
     if (usages.length === 1) {
       const usage = usages[0]!;
       let ex = NaN, ey = NaN, ew = NaN, eh = NaN;
@@ -137,7 +219,6 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
         eh = parseFloat(usage.getAttribute('height') || '0');
       } else if (usage.tagName.toLowerCase() === 'g' && usage.children.length === 1) {
         const child = usage.children[0]!;
-        // Only if the single child is an image — don't guess bounds of complex groups
         if (child.tagName.toLowerCase() === 'image') {
           ex = parseFloat(child.getAttribute('x') || '0');
           ey = parseFloat(child.getAttribute('y') || '0');
@@ -146,7 +227,7 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
         }
       }
 
-      if (!isNaN(ex) && !isNaN(ey) && !isNaN(ew) && !isNaN(eh)) {
+      if (!isNaN(ew) && ew > 0) {
         const isElementBounds =
           Math.abs(rx - ex) < 0.1 &&
           Math.abs(ry - ey) < 0.1 &&
@@ -155,19 +236,14 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
 
         if (isElementBounds) {
           warnings.push(`Removed redundant clip-path "#${id}" (element bounds)`);
-          usages.forEach(el => removeClipPathRef(el, id));
+          usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
           clip.remove();
         }
       }
     }
   }
 
-  // ── Rule E: Redundant no-op <g> wrappers ───────────────────────────────
-  // Unwrap <g> elements that carry no meaningful attributes AND wrap exactly
-  // one child. Process bottom-up so inner redundant groups collapse first.
-  //
-  // NEVER unwrap if the group has clip-path, mask, filter, opacity, display,
-  // visibility, or pointer-events — these all have visual/semantic meaning.
+  // ── Rule E: Redundant no-op <g> wrappers ──────────────────────────────
   const protectedAttrs = new Set([
     'clip-path', 'clipPath', 'mask', 'filter', 'opacity',
     'display', 'visibility', 'pointer-events',
@@ -178,24 +254,25 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   ]);
 
   let groupsRemoved = 0;
-  // Re-collect after clip-path mutations, process bottom-up
   const groups = allElements().filter(el => el.tagName.toLowerCase() === 'g').reverse();
 
   for (const g of groups) {
-    // Skip if group has any protected attribute
+    // Skip if any protected attribute
     const hasProtected = Array.from(g.attributes).some(a => protectedAttrs.has(a.name));
     if (hasProtected) continue;
+
+    // Skip if class references a clip-path
+    const classList = (g.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+    const classHasClip = classList.some(cls => (classToClipMap.get(cls) ?? []).length > 0);
+    if (classHasClip) continue;
 
     const graphicsChildren = Array.from(g.children).filter(c =>
       graphicsTags.has(c.tagName.toLowerCase()),
     );
-
     if (graphicsChildren.length === 1 && g.children.length === graphicsChildren.length) {
       const parent = g.parentNode;
       if (!parent) continue;
       const child = graphicsChildren[0]!;
-
-      // Merge safe attributes down to child before removing the group
       for (const attr of Array.from(g.attributes)) {
         const name = attr.name;
         if (protectedAttrs.has(name)) continue;
@@ -210,7 +287,6 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
           child.setAttribute(name, attr.value);
         }
       }
-
       parent.insertBefore(child, g);
       g.remove();
       groupsRemoved++;
