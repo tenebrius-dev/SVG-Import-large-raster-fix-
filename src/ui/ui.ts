@@ -77,6 +77,38 @@ const toast         = $('toast');
 // View management
 // ---------------------------------------------------------------------------
 
+function updateSize(immediate = false): void {
+  const resize = () => {
+    const header = document.querySelector('.header') as HTMLElement;
+    const content = document.querySelector('.content') as HTMLElement;
+    const actionBar = document.querySelector('.action-bar') as HTMLElement;
+
+    if (!header || !content || !actionBar) return;
+
+    // Temporarily disable flex to measure true intrinsic height
+    const oldFlex = content.style.flex;
+    const oldHeight = content.style.height;
+    content.style.flex = 'none';
+    content.style.height = 'auto';
+
+    let height = header.offsetHeight + content.offsetHeight;
+    if (actionBar.style.display !== 'none') {
+      height += actionBar.offsetHeight;
+    }
+
+    // Restore styles
+    content.style.flex = oldFlex;
+    content.style.height = oldHeight;
+
+    if (height > 600) height = 600;
+    // adding a tiny 4px buffer to ensure no cutoff at the very bottom
+    height += 4;
+    sendToPlugin({ type: 'resize-window', width: 400, height } as any);
+  };
+  if (immediate) resize();
+  else setTimeout(resize, 50);
+}
+
 function showView(view: AppView): void {
   state.view = view;
   document.querySelectorAll('.view').forEach((el) => el.classList.remove('active'));
@@ -95,7 +127,7 @@ function showView(view: AppView): void {
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M8 1v10M4 7l4 4 4-4M2 14h12"/>
       </svg>
-      Import Again`;
+      Reset Plugin`;
     btnImport.disabled = false;
     btnImport.onclick = () => {
       state.files = [];
@@ -104,6 +136,7 @@ function showView(view: AppView): void {
       resetImportButton();
     };
   }
+  updateSize();
 }
 
 function resetImportButton(): void {
@@ -173,18 +206,19 @@ async function addFiles(fileList_: FileList | File[]): Promise<void> {
 }
 
 async function addSVGText(svgText: string, source = 'clipboard'): Promise<void> {
-  const fileName = source === 'clipboard' ? 'clipboard.svg' : 'pasted.svg';
+  let baseName = source === 'clipboard' ? 'clipboard' : 'pasted';
+  let fileName = `${baseName}.svg`;
+  let counter = 1;
+
+  while (state.files.some((f) => f.fileName === fileName)) {
+    fileName = `${baseName} (${counter}).svg`;
+    counter++;
+  }
+
   const entry = analyzeFile(fileName, svgText);
   if (!entry) return;
 
-  if (!state.files.some((f) => f.fileName === fileName)) {
-    state.files.push(entry);
-  } else {
-    // Replace clipboard entry
-    const idx = state.files.findIndex((f) => f.fileName === fileName);
-    if (idx !== -1) state.files[idx] = entry;
-  }
-
+  state.files.push(entry);
   renderFileList();
   showView('files');
 }
@@ -251,7 +285,7 @@ function renderFileList(): void {
 
 const STAGES = ['parse', 'extract', 'import-svg', 'import-raster', 'restore', 'done'];
 
-function setProgress(stage: string, current: number, total: number): void {
+function setProgress(stage: string, stepId: string, current: number, total: number): void {
   progressStage.textContent = stage;
   progressSub.textContent = total > 0 ? `${current} / ${total}` : '';
   progressBar.style.width = total > 0 ? `${Math.round((current / total) * 100)}%` : '0%';
@@ -261,7 +295,7 @@ function setProgress(stage: string, current: number, total: number): void {
   stageItems.forEach((el) => {
     const s = (el as HTMLElement).dataset['stage'];
     if (!found) {
-      if (stage.toLowerCase().includes(s ?? '')) {
+      if (s === stepId) {
         el.className = 'stage-item active';
         found = true;
       } else {
@@ -271,6 +305,8 @@ function setProgress(stage: string, current: number, total: number): void {
       el.className = 'stage-item';
     }
   });
+
+  updateSize();
 }
 
 // ---------------------------------------------------------------------------
@@ -303,12 +339,16 @@ function renderReport(results: SVGImportResult[]): void {
     fileDiv.className = 'report-file';
 
     let inner = `
-      <div class="report-file-header">
+      <div class="report-file-header" style="cursor:pointer;" data-toggle-details>
         <span class="report-file-name">${escapeHtml(summary.fileName)}</span>
         <span class="status-badge ${summary.success ? 'success' : 'error'}">
           ${summary.success ? '✓ OK' : '✗ Error'}
         </span>
+        <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px; height:12px; color:var(--text-muted); transition:transform 0.2s; margin-left: 4px;">
+          <path d="M4 6l4 4 4-4"/>
+        </svg>
       </div>
+      <div class="report-file-details" style="display: none;">
     `;
 
     if (summary.error) {
@@ -318,7 +358,6 @@ function renderReport(results: SVGImportResult[]): void {
     for (const entry of summary.rasterEntries) {
       inner += `
         <div class="report-raster">
-          <div class="report-raster-name">${escapeHtml(entry.name)}</div>
           <table class="report-table">
             <tr>
               <td>Original bitmap</td>
@@ -352,12 +391,39 @@ function renderReport(results: SVGImportResult[]): void {
       inner += `</div>`;
     }
 
+    if (summary.rasterEntries.length === 0 && summary.warnings.length === 0 && !summary.error) {
+      inner += `
+        <div class="report-raster">
+          <span style="color:var(--text-secondary); font-size:10px;">No large rasters found. Import completed natively.</span>
+        </div>
+      `;
+    }
+
+    inner += `</div>`; // close .report-file-details
+
     fileDiv.innerHTML = inner;
     reportContent.appendChild(fileDiv);
   }
 
   showView('report');
 }
+
+// Add event delegation for the report accordion
+reportContent.addEventListener('click', (e) => {
+  const header = (e.target as HTMLElement).closest('.report-file-header') as HTMLElement;
+  if (header) {
+    const details = header.nextElementSibling as HTMLElement;
+    const chevron = header.querySelector('.chevron') as HTMLElement;
+    if (details) {
+      const isHidden = details.style.display === 'none';
+      details.style.display = isHidden ? 'block' : 'none';
+      if (chevron) {
+        chevron.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+      }
+      updateSize();
+    }
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Image processing & downscaling helper
@@ -590,7 +656,7 @@ window.onmessage = (event: MessageEvent) => {
       break;
 
     case 'import-progress':
-      setProgress(msg.stage, msg.current, msg.total);
+      setProgress(msg.stage, msg.stepId, msg.current, msg.total);
       break;
 
     case 'import-complete':
@@ -732,6 +798,7 @@ btnSettings.addEventListener('click', () => {
   const isOpen = settingsPanel.style.display !== 'none';
   settingsPanel.style.display = isOpen ? 'none' : 'block';
   btnSettings.classList.toggle('active', !isOpen);
+  updateSize();
 });
 
 // Debug toggle
@@ -741,6 +808,8 @@ btnDebug.addEventListener('click', () => {
   btnDebug.classList.toggle('active', state.debugMode);
   debugSection.style.display = state.debugMode ? 'block' : 'none';
   if (state.debugMode) debugAppend('[debug] Debug mode enabled');
+  syncSettings();
+  updateSize();
 });
 
 // Copy debug log
@@ -796,6 +865,7 @@ toggleOptimizeMasks.addEventListener('change', syncSettings);
 // Initialize
 syncSettings();
 showView('idle');
+setTimeout(() => updateSize(true), 50);
 
 // Announce ready to plugin
 sendToPlugin({ type: 'ping' });

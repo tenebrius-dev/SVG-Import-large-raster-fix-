@@ -17,12 +17,6 @@
   <!-- ═══════════════ HEADER ═══════════════ -->
   <header class="header">
     <div class="header-title">
-      <div class="header-logo">
-        <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-          <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zm0 7h5v5H9V9zm-7 0h5v5H2V9z"/>
-        </svg>
-      </div>
-      <h1>SVG Smart Import</h1>
     </div>
     <div class="header-actions">
       <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Toggle settings">
@@ -43,7 +37,7 @@
   <main class="content">
 
     <!-- Settings panel (shown when settings icon toggled) -->
-    <div id="settings-panel" style="display:none; margin-bottom: 16px; flex-shrink: 0;">
+    <div id="settings-panel" style="display:none;">
       <div class="settings-card">
         <div class="settings-card-title">Settings</div>
 
@@ -59,7 +53,7 @@
         </div>
 
         <!-- Slice large images toggle (shown only when optimize is enabled) -->
-        <div class="setting-row" id="slicing-setting" style="margin-top: 12px;">
+        <div class="setting-row" id="slicing-setting">
           <label class="setting-label" for="toggle-slice-images">
             Slice images larger than 4096px (No quality loss)
           </label>
@@ -69,7 +63,7 @@
           </label>
         </div>
         <!-- Optimize masks toggle -->
-        <div class="setting-row" style="margin-top: 12px;">
+        <div class="setting-row">
           <label class="setting-label" for="toggle-optimize-masks">
             Clean up redundant mask groups (clip-path)
           </label>

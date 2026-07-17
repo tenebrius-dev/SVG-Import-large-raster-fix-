@@ -20,8 +20,8 @@ import { findPlaceholder } from './layerOrder.js';
 // ---------------------------------------------------------------------------
 
 figma.showUI(__html__, {
-  width: 480,
-  height: 640,
+  width: 400,
+  height: 600,
   title: 'SVG Smart Import',
   themeColors: true,
 });
@@ -38,6 +38,10 @@ figma.ui.onmessage = async (rawMsg: unknown) => {
   switch (msg.type) {
     case 'ping':
       figma.ui.postMessage({ type: 'pong' } as PluginMessage);
+      break;
+
+    case 'resize-window':
+      figma.ui.resize(msg.width, msg.height);
       break;
 
     case 'close':
@@ -70,7 +74,7 @@ async function handleImportBatch(jobs: ImportJobSVG[]): Promise<void> {
     const job = jobs[i]!;
     const { settings } = job;
 
-    sendProgress(`Processing "${job.svgFileName}"`, i, total);
+    await sendProgress(`Processing "${job.svgFileName}"`, 'import-svg', i, total);
 
     let result: SVGImportResult;
     try {
@@ -96,7 +100,7 @@ async function handleImportBatch(jobs: ImportJobSVG[]): Promise<void> {
     }
   }
 
-  sendProgress('Done', total, total);
+  await sendProgress('Done', 'done', total, total);
   figma.ui.postMessage({ type: 'import-complete', results } as PluginMessage);
 
   // Scroll to view all imported frames
@@ -129,7 +133,7 @@ async function processSingleSVG(
   const rasterResults: RasterImportResult[] = [];
 
   // ── STEP 1: Import clean SVG (vectors + placeholder rects) ──────────────
-  sendProgress(`Importing vectors for "${svgFileName}"`, 0, 1);
+  await sendProgress(`Importing vectors for "${svgFileName}"`, 'import-svg', 0, 1);
 
   let svgFrame: FrameNode;
   try {
@@ -152,8 +156,9 @@ async function processSingleSVG(
   // ── STEP 2: Import each raster separately ───────────────────────────────
   for (let i = 0; i < rasters.length; i++) {
     const payload = rasters[i]!;
-    sendProgress(
+    await sendProgress(
       `Importing raster "${payload.info.name}" (${i + 1}/${rasters.length})`,
+      'import-raster',
       i,
       rasters.length,
     );
@@ -216,13 +221,16 @@ async function processSingleSVG(
 // Utilities
 // ---------------------------------------------------------------------------
 
-function sendProgress(stage: string, current: number, total: number): void {
+async function sendProgress(stage: string, stepId: string, current: number, total: number): Promise<void> {
   figma.ui.postMessage({
     type: 'import-progress',
     stage,
+    stepId,
     current,
     total,
   } as PluginMessage);
+  // Yield to Figma to allow UI to receive message and update layout
+  await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
 function getFrameWidth(nodeId: string): number {
