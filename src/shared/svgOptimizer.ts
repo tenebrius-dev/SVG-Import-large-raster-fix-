@@ -1,215 +1,135 @@
 import type { SVGInfo } from './types.js';
 
-function findClipPathUsages(doc: Document, id: string): Element[] {
-  const usages: Element[] = [];
-  const attrElements = Array.from(doc.querySelectorAll('[clip-path]'));
-  for (const el of attrElements) {
-    const val = el.getAttribute('clip-path') || '';
-    if (val.includes(`#${id}`) && val.includes('url(')) usages.push(el);
-  }
-  const styleElements = Array.from(doc.querySelectorAll('[style*="clip-path"]'));
-  for (const el of styleElements) {
-    const val = el.getAttribute('style') || '';
-    if (val.includes('clip-path') && val.includes(`#${id}`) && val.includes('url(')) {
-      if (!usages.includes(el)) usages.push(el);
-    }
-  }
-  return usages;
-}
-
-function removeClipPathUsage(el: Element, id: string): void {
-  const attr = el.getAttribute('clip-path');
-  if (attr && attr.includes(`#${id}`)) el.removeAttribute('clip-path');
-  
-  const style = el.getAttribute('style');
-  if (style && style.includes('clip-path') && style.includes(`#${id}`)) {
-    const newStyle = style.replace(/clip-path\s*:\s*url\([^)]*#[^)]*\)\s*;?/i, '').trim();
-    if (newStyle) el.setAttribute('style', newStyle);
-    else el.removeAttribute('style');
-  }
-}
-
 /**
  * Remove redundant <clipPath> masks from an SVG Document.
  * Runs in-place on the Document.
  * Returns a list of optimization messages (warnings).
+ *
+ * SAFE rules only:
+ *  - Rule 1: Remove artboard-bounds clip-paths (whole document rect) — safe, Figma adds its own bounds.
+ *  - Rule 2: Remove truly empty <clipPath> elements (no children at all).
+ *  - Rule 3: Unwrap <g> groups that have NO attributes and a single child — purely structural wrappers.
+ *
+ * REMOVED (too risky):
+ *  - "Element bounds" clip-path matching — can cause false positives.
+ *  - "Unused clip-path" detection — querySelectorAll('[clip-path]') is unreliable in Figma iframe.
  */
 export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   const warnings: string[] = [];
 
-  const clipPaths = Array.from(doc.querySelectorAll('clipPath'));
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  clipPaths.forEach((clip) => {
-    const id = clip.getAttribute('id');
-    if (!id) return;
-
-    // A redundant clip path is one that has exactly one <rect> child
-    const children = Array.from(clip.children);
-    if (children.length !== 1 || children[0]!.tagName.toLowerCase() !== 'rect') {
-      return;
+  /** Find all elements that reference a given clipPath id (attribute or style). */
+  function findClipPathUsages(id: string): Element[] {
+    const usages: Element[] = [];
+    // Walk the entire document manually — more reliable than querySelectorAll
+    const walker = doc.createTreeWalker(doc.documentElement, 0x1 /* SHOW_ELEMENT */);
+    let node: Node | null = walker.currentNode;
+    while (node) {
+      const el = node as Element;
+      const attrVal = el.getAttribute('clip-path') || el.getAttribute('clipPath') || '';
+      if (attrVal.includes(`#${id}`) && attrVal.includes('url(')) {
+        usages.push(el);
+      } else {
+        const styleVal = el.getAttribute('style') || '';
+        if (styleVal.includes('clip-path') && styleVal.includes(`#${id}`) && styleVal.includes('url(')) {
+          usages.push(el);
+        }
+      }
+      node = walker.nextNode();
     }
+    return usages;
+  }
+
+  /** Remove clip-path references (attribute + inline style) from an element. */
+  function removeClipPathUsage(el: Element, id: string): void {
+    const attrVal = el.getAttribute('clip-path') || el.getAttribute('clipPath') || '';
+    if (attrVal.includes(`#${id}`)) {
+      el.removeAttribute('clip-path');
+      el.removeAttribute('clipPath');
+    }
+    const styleVal = el.getAttribute('style') || '';
+    if (styleVal.includes('clip-path') && styleVal.includes(`#${id}`)) {
+      const cleaned = styleVal.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
+      if (cleaned) el.setAttribute('style', cleaned);
+      else el.removeAttribute('style');
+    }
+  }
+
+  // ── Rule 1: Artboard-bounds clip paths ────────────────────────────────────
+  // These are <clipPath> elements that clip exactly to the full document rect.
+  // Figma adds its own frame bounds, so these are always redundant.
+  const allClipPaths = Array.from(doc.querySelectorAll('clipPath'));
+  for (const clip of allClipPaths) {
+    const id = clip.getAttribute('id');
+    if (!id) continue;
+
+    const children = Array.from(clip.children);
+    if (children.length !== 1 || children[0]!.tagName.toLowerCase() !== 'rect') continue;
 
     const rect = children[0]!;
-    
-    // Check if the rect is just covering the entire document (artboard clip)
     const x = parseFloat(rect.getAttribute('x') || '0');
     const y = parseFloat(rect.getAttribute('y') || '0');
     const w = parseFloat(rect.getAttribute('width') || '0');
     const h = parseFloat(rect.getAttribute('height') || '0');
 
-    // Rule 1: Artboard clip
     const isArtboardClip =
       Math.abs(x) < 0.1 &&
       Math.abs(y) < 0.1 &&
       Math.abs(w - info.width) < 1 &&
       Math.abs(h - info.height) < 1;
 
-    let isRedundant = isArtboardClip;
-    let reason = 'document bounds';
+    if (!isArtboardClip) continue;
 
-    // Rule 2: Element bounds clip (e.g., wrapping an image perfectly)
-    // We check if this clipPath is used, and if so, if it just wraps exactly what it clips.
-    if (!isRedundant) {
-      // Find all elements using this clip path
-      // Note: CSS selector for exact match
-      const usages = findClipPathUsages(doc, id);
-      
-      if (usages.length === 1) {
-        const usage = usages[0]!;
-        // Often it's a <g> wrapping a single <image> or <path>
-        // But if the clipPath rect matches the exact bounds of the `<image>`, it's redundant.
-        // We can do a simple heuristic: if the usage is a <g> and it has 1 child which has the same x, y, width, height.
-        if (usage.tagName.toLowerCase() === 'g' && usage.children.length === 1) {
-          const child = usage.children[0]!;
-          const cx = parseFloat(child.getAttribute('x') || '0');
-          const cy = parseFloat(child.getAttribute('y') || '0');
-          const cw = parseFloat(child.getAttribute('width') || '0');
-          const ch = parseFloat(child.getAttribute('height') || '0');
-          
-          if (
-            Math.abs(x - cx) < 0.1 &&
-            Math.abs(y - cy) < 0.1 &&
-            Math.abs(w - cw) < 1 &&
-            Math.abs(h - ch) < 1
-          ) {
-            isRedundant = true;
-            reason = 'element bounds';
-          }
-        } else if (usage.tagName.toLowerCase() === 'image') {
-          const cx = parseFloat(usage.getAttribute('x') || '0');
-          const cy = parseFloat(usage.getAttribute('y') || '0');
-          const cw = parseFloat(usage.getAttribute('width') || '0');
-          const ch = parseFloat(usage.getAttribute('height') || '0');
+    // Verify it's actually used before removing (belt-and-suspenders)
+    const usages = findClipPathUsages(id);
+    warnings.push(`Removed redundant clip-path "#${id}" (document bounds)`);
+    usages.forEach(el => removeClipPathUsage(el, id));
+    clip.remove();
+  }
 
-          if (
-            Math.abs(x - cx) < 0.1 &&
-            Math.abs(y - cy) < 0.1 &&
-            Math.abs(w - cw) < 1 &&
-            Math.abs(h - ch) < 1
-          ) {
-            isRedundant = true;
-            reason = 'element bounds';
-          }
-        }
-      }
-    }
-
-    if (isRedundant) {
-      warnings.push(`Removed redundant clip-path "#${id}" (${reason})`);
-      
-      // Remove clip-path attributes from all elements referencing it
-      const usages = findClipPathUsages(doc, id);
-      usages.forEach(el => removeClipPathUsage(el, id));
-      
-      // Remove the clipPath definition itself
-      clip.remove();
-      return;
-    }
-  });
-
-  // Rule 3: Empty/unused clip paths
-  // Only remove empty ones or ones that are completely unused.
+  // ── Rule 2: Completely empty <clipPath> elements ───────────────────────────
+  // A <clipPath> with zero children is invalid and can cause rendering issues.
   const remainingClipPaths = Array.from(doc.querySelectorAll('clipPath'));
-  remainingClipPaths.forEach(clip => {
+  for (const clip of remainingClipPaths) {
     const id = clip.getAttribute('id');
-    if (!id) return;
-    
-    const usages = findClipPathUsages(doc, id);
-    if (usages.length === 0) {
-      warnings.push(`Removed unused clip-path "#${id}"`);
-      clip.remove();
-    } else if (clip.children.length === 0) {
+    if (!id) continue;
+    if (clip.children.length === 0) {
+      const usages = findClipPathUsages(id);
       warnings.push(`Removed empty clip-path "#${id}"`);
       usages.forEach(el => removeClipPathUsage(el, id));
       clip.remove();
     }
-  });
+  }
 
-  // Rule 4: Redundant <g> elements
-  // We process bottom-up (reverse order) so nested redundant groups collapse upwards.
-  const groups = Array.from(doc.querySelectorAll('g')).reverse();
+  // ── Rule 3: Pure no-attribute single-child <g> wrappers ───────────────────
+  // Only unwrap if:
+  //   a) The <g> has NO attributes at all (no id, class, style, clip-path, transform, etc.)
+  //   b) The <g> has exactly 1 child element.
+  // This is the most conservative possible approach.
+  const graphicsTags = new Set(['g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'image', 'use', 'svg']);
   let groupsRemoved = 0;
 
-  groups.forEach((g) => {
-    // Only count visible graphic elements
-    const graphicsTags = ['g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'image', 'use'];
-    const graphicsChildren = Array.from(g.children).filter(c => graphicsTags.includes(c.tagName.toLowerCase()));
-    
-    // If no graphic elements, but maybe defs/title? Move them out and remove the group
-    if (graphicsChildren.length === 0) {
-      while (g.firstChild) {
-        g.parentNode?.insertBefore(g.firstChild, g);
-      }
+  // Process bottom-up
+  const groups = Array.from(doc.querySelectorAll('g')).reverse();
+  for (const g of groups) {
+    // Must have zero attributes — any attribute means it carries semantic information
+    if (g.attributes.length > 0) continue;
+
+    const graphicsChildren = Array.from(g.children).filter(c =>
+      graphicsTags.has(c.tagName.toLowerCase()),
+    );
+
+    if (graphicsChildren.length === 1 && g.children.length === 1) {
+      // Safe to unwrap: move child out, delete group
+      const parent = g.parentNode;
+      if (!parent) continue;
+      const child = graphicsChildren[0]!;
+      parent.insertBefore(child, g);
       g.remove();
       groupsRemoved++;
-      return;
     }
-
-    // If exactly 1 graphic element child, check if we can unwrap
-    if (graphicsChildren.length === 1) {
-      const child = graphicsChildren[0]!;
-      
-      // Check if we can safely merge attributes
-      const unmergeable = ['opacity', 'clip-path', 'mask', 'filter'];
-      let canUnwrap = true;
-      for (const attr of unmergeable) {
-        if (g.hasAttribute(attr) && child.hasAttribute(attr)) {
-          canUnwrap = false;
-          break;
-        }
-      }
-
-      if (canUnwrap) {
-        // Merge attributes down to the single graphic child
-        for (const attr of Array.from(g.attributes)) {
-          const name = attr.name;
-          const pVal = attr.value;
-          const cVal = child.getAttribute(name);
-
-          if (name === 'transform') {
-            child.setAttribute('transform', cVal ? `${pVal} ${cVal}` : pVal);
-          } else if (name === 'class') {
-            child.setAttribute('class', cVal ? `${pVal} ${cVal}` : pVal);
-          } else if (name === 'style') {
-            child.setAttribute('style', cVal ? `${pVal}; ${cVal}` : pVal);
-          } else if (name === 'id' || name === 'data-name') {
-            if (!cVal) child.setAttribute(name, pVal);
-          } else {
-            // Presentation attributes (fill, stroke, etc.)
-            // Child overrides parent. So if child doesn't have it, inherit from parent.
-            if (!cVal) child.setAttribute(name, pVal);
-          }
-        }
-
-        // Move ALL nodes (including text nodes, defs, etc) out of the group, then remove group
-        while (g.firstChild) {
-          g.parentNode?.insertBefore(g.firstChild, g);
-        }
-        g.remove();
-        groupsRemoved++;
-      }
-    }
-  });
+  }
 
   if (groupsRemoved > 0) {
     warnings.push(`Unwrapped ${groupsRemoved} redundant <g> groups`);
