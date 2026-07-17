@@ -1,6 +1,6 @@
 {
   "name": "svg-smart-import",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Figma plugin for SVG import with correct large embedded raster handling",
   "scripts": {
     "build": "node esbuild.config.js",
