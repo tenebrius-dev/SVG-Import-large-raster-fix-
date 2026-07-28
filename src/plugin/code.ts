@@ -79,7 +79,7 @@ async function handleImportBatch(jobs: ImportJobSVG[]): Promise<void> {
     let result: SVGImportResult;
     try {
       result = await processSingleSVG(job, canvasX, canvasY);
-      canvasX += result.frameNodeId ? getFrameWidth(result.frameNodeId) + GAP : GAP;
+      canvasX += result.frameNodeId ? (await getFrameWidth(result.frameNodeId)) + GAP : GAP;
     } catch (e) {
       result = {
         svgFileName: job.svgFileName,
@@ -105,10 +105,13 @@ async function handleImportBatch(jobs: ImportJobSVG[]): Promise<void> {
 
   // Scroll to view all imported frames
   try {
-    const frameIds = results
-      .filter((r) => r.frameNodeId)
-      .map((r) => figma.getNodeById(r.frameNodeId!))
-      .filter(Boolean) as SceneNode[];
+    const frameIds = (
+      await Promise.all(
+        results
+          .filter((r) => r.frameNodeId)
+          .map((r) => figma.getNodeByIdAsync(r.frameNodeId!))
+      )
+    ).filter(Boolean) as SceneNode[];
     if (frameIds.length > 0) {
       figma.currentPage.selection = frameIds;
       figma.viewport.scrollAndZoomIntoView(frameIds);
@@ -164,7 +167,7 @@ async function processSingleSVG(
     );
 
     try {
-      const location = figma.getNodeById(svgFrame.id) 
+      const location = (await figma.getNodeByIdAsync(svgFrame.id))
         ? findPlaceholder(svgFrame as unknown as SceneNode, payload.info.placeholderName)
         : null;
 
@@ -233,9 +236,9 @@ async function sendProgress(stage: string, stepId: string, current: number, tota
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-function getFrameWidth(nodeId: string): number {
+async function getFrameWidth(nodeId: string): Promise<number> {
   try {
-    const node = figma.getNodeById(nodeId);
+    const node = await figma.getNodeByIdAsync(nodeId);
     if (node && 'width' in node) return (node as FrameNode).width;
   } catch {
     // ignore
