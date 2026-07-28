@@ -188,8 +188,8 @@ function createPlaceholder(doc: Document, imgEl: Element, placeholderName: strin
   // Set our specific ID so we can find it
   rect.setAttribute('id', placeholderName);
   
-  // We want it to be a transparent fill placeholder for now
-  rect.setAttribute('fill', 'none');
+  // Give it a solid fill so Figma's SVG importer doesn't discard it as empty geometry
+  rect.setAttribute('fill', '#ffffff');
   rect.setAttribute('data-figma-raster-placeholder', 'true');
   
   if (transformVal) {
