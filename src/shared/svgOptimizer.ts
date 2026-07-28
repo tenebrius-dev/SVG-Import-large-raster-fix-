@@ -9,6 +9,18 @@ import type { SVGInfo } from './types.js';
  *  - Direct attribute: clip-path="url(#id)"
  *  - CSS class: .cls-N { clip-path: url(#id); } applied via class="cls-N"
  */
+function isSingleRectChild(child: Element): boolean {
+  const tagName = child.tagName.toLowerCase();
+  if (tagName === 'rect') return true;
+  if (tagName === 'path') {
+    const d = (child.getAttribute('d') || '').trim().replace(/\s+/g, ' ');
+    if (/^m\s*[\d.-]+[,\s]+[\d.-]+\s*h\s*[\d.-]+\s*v\s*[\d.-]+\s*h\s*[\d.-]+\s*z$/i.test(d)) return true;
+    if (/^m\s*[\d.-]+[,\s]+[\d.-]+\s*v\s*[\d.-]+\s*h\s*[\d.-]+\s*v\s*[\d.-]+\s*h\s*[\d.-]+\s*z$/i.test(d)) return true;
+    if (/^m\s*[\d.-]+[,\s]+[\d.-]+\s*l\s*[\d.-]+[,\s]+[\d.-]+\s*l\s*[\d.-]+[,\s]+[\d.-]+\s*l\s*[\d.-]+[,\s]+[\d.-]+\s*z$/i.test(d)) return true;
+  }
+  return false;
+}
+
 export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   const warnings: string[] = [];
   const root = doc.documentElement;
@@ -126,7 +138,6 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     const remaining = classes.filter(cls => {
       const clipIds = classMap.get(cls) ?? [];
       if (clipIds.includes(id)) {
-        // Only remove the class if it ONLY sets clip-path (nothing else visual)
         return !classOnlyClipMap.has(cls);
       }
       return true;
@@ -137,10 +148,7 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     }
   }
 
-  // ── Build CSS class → clipPath map ────────────────────────────────────
   const classToClipMap = buildClassToClipMap();
-
-  // Determine which classes ONLY set clip-path (so they can be fully removed)
   const classOnlyClipSet = new Set<string>();
   const styleEls = Array.from(doc.querySelectorAll('style'));
   for (const styleEl of styleEls) {
@@ -150,13 +158,11 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     while ((m = ruleRe.exec(css)) !== null) {
       const cls = m[1]!;
       const body = m[2]!.trim();
-      // Only clip-path declaration?
       const withoutCp = body.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
       if (!withoutCp) classOnlyClipSet.add(cls);
     }
   }
 
-  // ── Gather all <clipPath> elements ─────────────────────────────────────
   const clipPaths = allElements().filter(
     el => el.tagName === 'clipPath' || el.tagName.toLowerCase() === 'clippath',
   );
@@ -164,53 +170,26 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   for (const clip of clipPaths) {
     const id = clip.getAttribute('id');
     if (!id) continue;
-
     const children = Array.from(clip.children);
-
-    // ── Rule A: Empty <clipPath> ──────────────────────────────────────────
     if (children.length === 0) {
-      const usages = findClipPathUsages(id, classToClipMap);
+      const usages = findClipPathUsages(id, classToClipMap, doc);
       warnings.push(`Removed empty clip-path "#${id}"`);
       usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
       clip.remove();
       continue;
     }
-
-    // ── Rule B: Unused <clipPath> ─────────────────────────────────────────
-    const usages = findClipPathUsages(id, classToClipMap);
+    const usages = findClipPathUsages(id, classToClipMap, doc);
     if (usages.length === 0) {
       warnings.push(`Removed unused clip-path "#${id}"`);
       clip.remove();
       continue;
     }
-
-    // Only analyze single-rect clips further
-    if (children.length !== 1 || children[0]!.tagName.toLowerCase() !== 'rect') continue;
-
-    const rect = children[0]!;
-    const rx = parseFloat(rect.getAttribute('x') || '0');
-    const ry = parseFloat(rect.getAttribute('y') || '0');
-    const rw = parseFloat(rect.getAttribute('width') || '0');
-    const rh = parseFloat(rect.getAttribute('height') || '0');
-
-    // ── Rule C & D: Rectangular Bounding Box Clip ─────────────────────────
-    // In SVGs exported from design tools, single-rect clipPaths are almost
-    // entirely garbage bounding boxes (artboard bounds or image bounds).
-    // Because calculating exact bounds across nested transform matrices in pure
-    // JS is unreliable, we aggressively remove all single-rect clipPaths.
+    if (children.length !== 1 || !isSingleRectChild(children[0]!)) continue;
     warnings.push(`Removed rectangular bounding-box clip-path "#${id}"`);
     usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
     clip.remove();
   }
 
-  // ── Clean up <style> block ─────────────────────────────────────────────
-  // After removing clipPath definitions and their class attributes from elements,
-  // also remove the CSS rules that reference those clip-paths from the <style> block.
-  // Figma reads and applies <style> CSS during SVG import, so orphaned clip-path
-  // CSS rules would still create "Clip path group" layers.
-  //
-  // We remove entire CSS rules (.cls-N { ... }) that contain clip-path declarations
-  // pointing to clip-path IDs that no longer exist in the document.
   const remainingClipIds = new Set(
     allElements()
       .filter(el => el.tagName === 'clipPath' || el.tagName.toLowerCase() === 'clippath')
@@ -220,13 +199,10 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
 
   for (const styleEl of Array.from(doc.querySelectorAll('style'))) {
     let css = styleEl.textContent || '';
-
-    // Remove CSS rules whose clip-path references a deleted clipPath id
     css = css.replace(/\.([\w-]+)\s*\{([^}]*)\}/g, (fullRule, _cls, body) => {
       const cpRe = /clip-path\s*:\s*url\(['"]*#([\w-]+)['"]*\)/gi;
       let cpMatch: RegExpExecArray | null;
       let hasDeletedClip = false;
-
       while ((cpMatch = cpRe.exec(body)) !== null) {
         const clipId = cpMatch[1]!;
         if (!remainingClipIds.has(clipId)) {
@@ -234,27 +210,18 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
           break;
         }
       }
-
       if (hasDeletedClip) {
-        // Remove only the clip-path declaration from the body; if nothing remains, drop entire rule
         const cleanedBody = body.replace(/clip-path\s*:\s*url\([^)]*\)\s*;?/gi, '').trim();
-        if (!cleanedBody) return ''; // Remove entire rule
-        return fullRule.replace(body, cleanedBody); // Keep rule, remove only clip-path line
+        if (!cleanedBody) return '';
+        return fullRule.replace(body, cleanedBody);
       }
-      return fullRule; // Keep as-is
+      return fullRule;
     });
-
-    // Clean up extra blank lines
     css = css.replace(/\n{3,}/g, '\n\n').trim();
     styleEl.textContent = css || '';
-
-    // If style block is now empty, remove it entirely
     if (!css) styleEl.remove();
   }
 
-  // ── Rule E: Redundant no-op <g> wrappers ───────────────────────────────
-  // Unwrap <g> elements that carry no meaningful attributes AND wrap exactly
-  // one child. Process bottom-up so inner redundant groups collapse first.
   const protectedAttrs = new Set([
     'clip-path', 'clipPath', 'mask', 'filter', 'opacity',
     'display', 'visibility', 'pointer-events',
@@ -266,7 +233,6 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
 
   let groupsRemoved = 0;
   const groups = allElements().filter(el => el.tagName.toLowerCase() === 'g').reverse();
-
   for (const g of groups) {
     let hasProtected = false;
     for (const attr of Array.from(g.attributes)) {
@@ -276,25 +242,13 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
       }
     }
     if (hasProtected) continue;
-
-    // Never unwrap top-level groups (direct children of <svg>).
-    // Figma relies on these for main layer naming, and a known Figma bug causes
-    // sliced <svg> image wrappers or transformed elements to disappear if they
-    // become direct children of the root <svg> without a <g> wrapper.
     if (g.parentNode === root) continue;
-
+    if (g.hasAttribute('transform')) continue;
     const validChildren = Array.from(g.children).filter(child => graphicsTags.has(child.tagName.toLowerCase()));
     if (validChildren.length !== 1 || g.children.length !== 1) continue;
-
     const child = validChildren[0]!;
-
-    if (g.hasAttribute('transform') && child.hasAttribute('transform')) continue;
-
     for (const attr of Array.from(g.attributes)) {
       if (attr.name === 'id' || attr.name === 'data-name') {
-        // Outer groups often contain the human-readable layer name.
-        // Because we process bottom-up, outer groups are processed last,
-        // so overwriting here ensures the outermost name wins.
         child.setAttribute(attr.name, attr.value);
       } else if (!child.hasAttribute(attr.name)) {
         child.setAttribute(attr.name, attr.value);

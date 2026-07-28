@@ -166,11 +166,16 @@ function genPlaceholderName(): string {
 function createPlaceholder(doc: Document, imgEl: Element, placeholderName: string): Element {
   const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
   
-  // Copy all attributes EXCEPT href, xlink:href, and preserveAspectRatio
+  // Copy all attributes EXCEPT href, xlink:href, transform, and preserveAspectRatio
+  let transformVal: string | null = null;
   for (let i = 0; i < imgEl.attributes.length; i++) {
     const attr = imgEl.attributes[i]!;
     const name = attr.name;
     if (name === 'href' || name === 'xlink:href' || name === 'preserveAspectRatio') continue;
+    if (name === 'transform') {
+      transformVal = attr.value;
+      continue;
+    }
     rect.setAttributeNS(attr.namespaceURI, name, attr.value);
   }
   
@@ -187,6 +192,13 @@ function createPlaceholder(doc: Document, imgEl: Element, placeholderName: strin
   rect.setAttribute('fill', 'none');
   rect.setAttribute('data-figma-raster-placeholder', 'true');
   
+  if (transformVal) {
+    const wrapperGroup = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
+    wrapperGroup.setAttribute('transform', transformVal);
+    wrapperGroup.appendChild(rect);
+    return wrapperGroup;
+  }
+
   return rect;
 }
 
