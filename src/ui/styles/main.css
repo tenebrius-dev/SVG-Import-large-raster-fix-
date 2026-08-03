@@ -1,6 +1,7 @@
 /* main.css — SVG Smart Import Plugin UI
    Light theme, Figma-native style (matches image-ppi-inspector design)
    -------------------------------------------------------------------- */
+@import "../../ui3/src/index.css";
 
 @font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; src: url('https://static.figma.com/webfont/1/Inter-Regular.woff2?v=3.10a') format('woff2'); }
 @font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; src: url('https://static.figma.com/webfont/1/Inter-Medium.woff2?v=3.10a') format('woff2'); }
@@ -13,19 +14,19 @@
 }
 
 :root {
-  --text-primary:   rgba(0,0,0,0.9);
-  --text-secondary: rgba(0,0,0,0.45);
-  --text-muted:     rgba(0,0,0,0.3);
-  --figma-blue:     #0d99ff;
-  --bg:             #ffffff;
-  --bg-hover:       #f5f5f5;
-  --bg-toolbar:     #f9f9f9;
-  --border:         #e6e6e6;
-  --border-hover:   #d1d1d1;
-  --success:        #14a594;
-  --warning:        #d97706;
-  --error:          #f24822;
-  --font-stack:     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --text-primary:   var(--ui3-text);
+  --text-secondary: var(--ui3-text-secondary);
+  --text-muted:     var(--ui3-text-tertiary);
+  --figma-blue:     var(--ui3-text-brand);
+  --bg:             var(--ui3-bg);
+  --bg-hover:       var(--ui3-bg-hover);
+  --bg-toolbar:     var(--ui3-bg-secondary);
+  --border:         var(--ui3-border);
+  --border-hover:   var(--ui3-border-strong);
+  --success:        var(--ui3-text-success);
+  --warning:        var(--ui3-text-warning);
+  --error:          var(--ui3-text-danger);
+  --font-stack:     var(--ui3-font-ui);
   --transition:     0.1s ease;
 }
 
@@ -122,8 +123,8 @@ html, body {
 }
 
 .icon-btn.active {
-  color: var(--figma-blue);
-  background: rgba(13, 153, 255, 0.1);
+  color: var(--ui3-text-brand);
+  background: var(--ui3-bg-selected);
 }
 
 #settings-panel {
@@ -185,7 +186,7 @@ html, body {
 .toggle-track {
   position: absolute;
   inset: 0;
-  background: #d9d9d9;
+  background: var(--ui3-border-strong);
   border-radius: 8px;
   cursor: pointer;
   transition: background var(--transition);
@@ -258,8 +259,8 @@ html, body {
 .drop-zone:hover,
 .drop-zone:focus,
 .drop-zone.drag-over {
-  border-color: var(--figma-blue);
-  background: rgba(13, 153, 255, 0.04);
+  border-color: var(--ui3-text-brand);
+  background: var(--ui3-bg-selected);
 }
 
 .drop-zone-icon {
@@ -367,14 +368,14 @@ html, body {
   font-weight: 600;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(13, 153, 255, 0.1);
-  color: var(--figma-blue);
+  background: var(--ui3-bg-selected);
+  color: var(--ui3-text-brand);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .file-badge.warn {
-  background: rgba(217, 119, 6, 0.1);
+  background: var(--ui3-bg-warning);
   color: var(--warning);
 }
 
@@ -395,7 +396,7 @@ html, body {
 
 .file-remove:hover {
   color: var(--error);
-  background: rgba(242, 72, 34, 0.08);
+  background: var(--ui3-bg-danger);
 }
 
 .file-remove svg {
@@ -443,13 +444,13 @@ html, body {
 }
 
 .btn-primary {
-  background: var(--figma-blue);
-  color: white;
+  background: var(--ui3-bg-brand);
+  color: var(--ui3-text-on-brand);
   border: none;
 }
 
 .btn-primary:hover {
-  background: #0087f5;
+  background: var(--ui3-bg-brand-hover);
 }
 
 .btn-primary:disabled {
@@ -597,14 +598,14 @@ html, body {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: rgba(20, 165, 148, 0.06);
-  border: 1px solid rgba(20, 165, 148, 0.2);
+  background: var(--ui3-bg-success);
+  border: 1px solid var(--ui3-text-success);
   border-radius: 6px;
 }
 
 .report-header.has-errors {
-  background: rgba(242, 72, 34, 0.06);
-  border-color: rgba(242, 72, 34, 0.2);
+  background: var(--ui3-bg-danger);
+  border-color: var(--ui3-border-danger);
 }
 
 .report-header svg {
@@ -677,12 +678,12 @@ html, body {
 }
 
 .status-badge.success {
-  background: rgba(20, 165, 148, 0.1);
+  background: var(--ui3-bg-success);
   color: var(--success);
 }
 
 .status-badge.error {
-  background: rgba(242, 72, 34, 0.1);
+  background: var(--ui3-bg-danger);
   color: var(--error);
 }
 
@@ -825,11 +826,12 @@ html, body {
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%) translateY(6px);
-  background: rgba(0,0,0,0.85);
+  background: var(--ui3-text);
+  color: var(--ui3-bg);
+  padding: 10px 16px;
   border-radius: 6px;
-  padding: 6px 14px;
   font-size: 11px;
-  color: white;
+  font-weight: 500;
   box-shadow: 0 4px 16px rgba(0,0,0,0.2);
   opacity: 0;
   transition: opacity var(--transition), transform var(--transition);

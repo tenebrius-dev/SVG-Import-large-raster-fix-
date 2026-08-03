@@ -54,9 +54,14 @@ async function buildUI() {
 
   const jsCode = Buffer.from(uiResult.outputFiles[0].contents).toString('utf8');
 
-  // Read CSS
-  const cssPath = path.join(BASE, 'src/ui/styles/main.css');
-  const cssCode = fs.readFileSync(cssPath, 'utf8');
+  // Bundle CSS
+  const cssResult = await esbuild.build({
+    entryPoints: [path.join(BASE, 'src/ui/styles/main.css')],
+    bundle: true,
+    write: false,
+    minify: isProd,
+  });
+  const cssCode = Buffer.from(cssResult.outputFiles[0].contents).toString('utf8');
 
   // Read HTML template
   const htmlPath = path.join(BASE, 'src/ui/ui.html');
