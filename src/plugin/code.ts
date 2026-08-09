@@ -21,7 +21,7 @@ import { findPlaceholder } from './layerOrder.js';
 
 figma.showUI(__html__, {
   width: 400,
-  height: 600,
+  height: 336,
   title: 'SVG Smart Import',
   themeColors: true,
 });

@@ -19,6 +19,20 @@ const DANGEROUS_ATTRS = [
   'onabort', 'onerror', 'onscroll', 'onwheel',
 ];
 
+function getXMLSerializer(): XMLSerializer {
+  if (typeof XMLSerializer !== 'undefined') {
+    return new XMLSerializer();
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<svg></svg>', { contentType: 'image/svg+xml', url: 'https://example.com' });
+    return new dom.window.XMLSerializer();
+  } catch (e) {
+    throw new Error(`XMLSerializer is not available in this environment: ${(e as Error).message}`);
+  }
+}
+
 export interface SanitizeResult {
   svgString: string;
   warnings: string[];
@@ -84,26 +98,8 @@ export function sanitizeSVGDocument(doc: Document, originalFileName: string): Sa
     }
   });
 
-  // 5. Ensure xml:space="preserve" on root to prevent Figma from collapsing spaces in <text>
-  if (!doc.documentElement.hasAttribute('xml:space')) {
-    doc.documentElement.setAttribute('xml:space', 'preserve');
-  }
-
-  // 6. Figma's SVG importer may still collapse spaces. Force preserve by converting spaces to non-breaking spaces
-  // in all <text> and <tspan> elements.
-  const textElements = doc.querySelectorAll('text, tspan');
-  textElements.forEach((el) => {
-    // We need to modify text nodes directly, not element.innerHTML, to avoid breaking nested <tspan>
-    el.childNodes.forEach((node) => {
-      if (node.nodeType === Node.TEXT_NODE && node.nodeValue) {
-        // Replace regular spaces with non-breaking spaces (\u00A0)
-        node.nodeValue = node.nodeValue.replace(/ /g, '\u00A0');
-      }
-    });
-  });
-
   // Serialize back to string
-  const serializer = new XMLSerializer();
+  const serializer = getXMLSerializer();
   const svgString = serializer.serializeToString(doc.documentElement);
 
   return { svgString, warnings };

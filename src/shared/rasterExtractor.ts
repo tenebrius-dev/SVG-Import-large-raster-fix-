@@ -322,8 +322,22 @@ export function extractRasters(
     }
   }
 
+function getXMLSerializer(): XMLSerializer {
+  if (typeof XMLSerializer !== 'undefined') {
+    return new XMLSerializer();
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<svg></svg>', { contentType: 'image/svg+xml', url: 'https://example.com' });
+    return new dom.window.XMLSerializer();
+  } catch (e) {
+    throw new Error(`XMLSerializer is not available in this environment: ${(e as Error).message}`);
+  }
+}
+
   // Serialize cleaned SVG
-  const serializer = new XMLSerializer();
+  const serializer = getXMLSerializer();
   const cleanedSvgString = serializer.serializeToString(svgRoot);
 
   return { rasters, cleanedSvgString, extractionWarnings: warnings };

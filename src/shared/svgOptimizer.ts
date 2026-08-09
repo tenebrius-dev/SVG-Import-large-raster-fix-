@@ -172,20 +172,32 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
     if (!id) continue;
     const children = Array.from(clip.children);
     if (children.length === 0) {
-      const usages = findClipPathUsages(id, classToClipMap, doc);
+      const usages = findClipPathUsages(id, classToClipMap);
       warnings.push(`Removed empty clip-path "#${id}"`);
       usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
       clip.remove();
       continue;
     }
-    const usages = findClipPathUsages(id, classToClipMap, doc);
+    const usages = findClipPathUsages(id, classToClipMap);
     if (usages.length === 0) {
       warnings.push(`Removed unused clip-path "#${id}"`);
       clip.remove();
       continue;
     }
     if (children.length !== 1 || !isSingleRectChild(children[0]!)) continue;
-    warnings.push(`Removed rectangular bounding-box clip-path "#${id}"`);
+    
+    // Check if rect matches document bounds or element bounds
+    const rect = children[0]!;
+    const rx = parseFloat(rect.getAttribute('x') || '0');
+    const ry = parseFloat(rect.getAttribute('y') || '0');
+    const rw = parseFloat(rect.getAttribute('width') || '0');
+    const rh = parseFloat(rect.getAttribute('height') || '0');
+    const vb = info.viewBox || { x: 0, y: 0, width: info.width, height: info.height };
+    const matchesDocBounds = Math.abs(rx - vb.x) < 0.1 && Math.abs(ry - vb.y) < 0.1 &&
+                            Math.abs(rw - vb.width) < 0.1 && Math.abs(rh - vb.height) < 0.1;
+
+    const boundsType = matchesDocBounds ? 'document bounds' : 'element bounds';
+    warnings.push(`Removed rectangular bounding-box clip-path "#${id}" (${boundsType})`);
     usages.forEach(el => removeClipPathRef(el, id, classToClipMap, classOnlyClipSet));
     clip.remove();
   }
@@ -223,7 +235,7 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   }
 
   const protectedAttrs = new Set([
-    'clip-path', 'clipPath', 'mask', 'filter', 'opacity',
+    'clip-path', 'clippath', 'mask', 'filter', 'opacity',
     'display', 'visibility', 'pointer-events',
   ]);
   const graphicsTags = new Set([
@@ -234,6 +246,7 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
   let groupsRemoved = 0;
   const groups = allElements().filter(el => el.tagName.toLowerCase() === 'g').reverse();
   for (const g of groups) {
+    if (!g.parentNode) continue;
     let hasProtected = false;
     for (const attr of Array.from(g.attributes)) {
       if (protectedAttrs.has(attr.name.toLowerCase())) {
@@ -242,8 +255,17 @@ export function optimizeSVGDocument(doc: Document, info: SVGInfo): string[] {
       }
     }
     if (hasProtected) continue;
+
+    // Remove empty groups (no element children) if no protected attributes or id
+    if (g.children.length === 0 && !g.hasAttribute('id')) {
+      g.remove();
+      groupsRemoved++;
+      continue;
+    }
+
     if (g.parentNode === root) continue;
     if (g.hasAttribute('transform')) continue;
+
     const validChildren = Array.from(g.children).filter(child => graphicsTags.has(child.tagName.toLowerCase()));
     if (validChildren.length !== 1 || g.children.length !== 1) continue;
     const child = validChildren[0]!;

@@ -19,11 +19,25 @@ import type { SVGInfo, SVGViewBox } from './types.js';
  * Parse an SVG string and extract document-level metadata.
  * @throws if the SVG is not well-formed XML.
  */
+function getDOMParser(): DOMParser {
+  if (typeof DOMParser !== 'undefined') {
+    return new DOMParser();
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<svg></svg>', { contentType: 'image/svg+xml', url: 'https://example.com' });
+    return new dom.window.DOMParser();
+  } catch (e) {
+    throw new Error(`DOMParser is not available in this environment: ${(e as Error).message}`);
+  }
+}
+
 export function parseSVGDocument(svgString: string): {
   doc: Document;
   info: SVGInfo;
 } {
-  const parser = new DOMParser();
+  const parser = getDOMParser();
   const doc = parser.parseFromString(svgString, 'image/svg+xml');
 
   // Check for parser errors

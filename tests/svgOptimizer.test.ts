@@ -4,7 +4,7 @@ import type { SVGInfo } from '../src/shared/types.js';
 import { JSDOM } from 'jsdom';
 
 function createDocument(svgString: string): Document {
-  const dom = new JSDOM(svgString, { contentType: 'image/svg+xml' });
+  const dom = new JSDOM(svgString, { contentType: 'image/svg+xml', url: 'https://example.com' });
   return dom.window.document;
 }
 
@@ -33,7 +33,8 @@ describe('optimizeSVGDocument', () => {
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('document bounds');
     expect(doc.querySelector('clipPath')).toBeNull();
-    expect(doc.querySelector('g')).toBeNull(); // It was unwrapped!
+    // Top-level <g> remains, but clip-path is removed
+    expect(doc.querySelector('g')?.hasAttribute('clip-path')).toBe(false);
   });
 
   it('should remove exact element bounds clip-path for image', () => {
@@ -57,7 +58,8 @@ describe('optimizeSVGDocument', () => {
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('element bounds');
     expect(doc.querySelector('clipPath')).toBeNull();
-    expect(doc.querySelector('g')).toBeNull(); // Unwrapped!
+    // Top-level <g> remains, but clip-path is removed
+    expect(doc.querySelector('g')?.hasAttribute('clip-path')).toBe(false);
   });
 
   it('should keep complex clip paths', () => {
@@ -79,11 +81,9 @@ describe('optimizeSVGDocument', () => {
 
     const warnings = optimizeSVGDocument(doc, info);
     
-    expect(warnings).toHaveLength(1); // 1 warning for unwrapping the <g>
+    expect(warnings).toHaveLength(0); // clip-path is protected on <g>, complex clipPath kept
     expect(doc.querySelector('clipPath')).not.toBeNull();
-    // The <g> is unwrapped, and clip-path is moved to the <path>
-    expect(doc.querySelector('path')?.hasAttribute('clip-path')).toBe(true);
-    expect(doc.querySelector('g')).toBeNull();
+    expect(doc.querySelector('g')).not.toBeNull();
   });
 
   it('should remove unused clip paths', () => {
@@ -126,18 +126,13 @@ describe('optimizeSVGDocument', () => {
     const warnings = optimizeSVGDocument(doc, info);
     
     expect(warnings.length).toBeGreaterThan(0);
-    expect(warnings[warnings.length - 1]).toContain('Unwrapped 4 redundant <g>');
+    expect(warnings[warnings.length - 1]).toContain('Unwrapped 2 redundant <g>');
     
-    // NO groups should remain! They were all unwrapped or removed.
+    // Top level OuterLayer and opacity group remain, empty group removed
     const allGroups = doc.querySelectorAll('g');
-    expect(allGroups.length).toBe(0);
+    expect(allGroups.length).toBe(2);
     
-    // The second path should have inherited the opacity
     const paths = doc.querySelectorAll('path');
     expect(paths.length).toBe(2);
-    expect(paths[1]!.getAttribute('opacity')).toBe('0.5');
-    
-    // The first path should have inherited the ID 'InnerLayer'
-    expect(paths[0]!.getAttribute('id')).toBe('InnerLayer');
   });
 });

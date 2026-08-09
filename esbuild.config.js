@@ -47,6 +47,7 @@ async function buildUI() {
     target: ['chrome112'],
     format: 'iife',
     minify: isProd,
+    external: ['jsdom'],
     define: {
       'process.env.NODE_ENV': isProd ? '"production"' : '"development"',
     },
@@ -84,16 +85,11 @@ async function main() {
     await buildUI();
     await buildPluginCode();
 
-    // For UI watch: use a simple file watcher
-    const uiSrcFiles = [
-      path.join(BASE, 'src/ui/ui.ts'),
-      path.join(BASE, 'src/ui/ui.html'),
-      path.join(BASE, 'src/ui/styles/main.css'),
-    ];
-
+    // For UI watch: watch src/ui directory recursively
+    const uiDir = path.join(BASE, 'src/ui');
     let uiRebuildTimeout = null;
-    for (const file of uiSrcFiles) {
-      fs.watch(file, () => {
+    if (fs.existsSync(uiDir)) {
+      fs.watch(uiDir, { recursive: true }, () => {
         clearTimeout(uiRebuildTimeout);
         uiRebuildTimeout = setTimeout(async () => {
           try {
